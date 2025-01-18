@@ -9,6 +9,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 const CameraStream = () => {
   const webcamRef = useRef<Webcam>(null);
   const requestAnimationFrameRef = useRef<number | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [isVideoReady, setIsVideoReady] = useState(false);
   const [emotionScore, setEmotionScore] = useState<EmotionScore | null>(null);
@@ -18,6 +19,36 @@ const CameraStream = () => {
     width: 640,
     height: 480,
     facingMode: "user"
+  };
+
+  useEffect(() => {
+    const ws = new WebSocket('ws://localhost:8080/ws');
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        setEmotionScore(data);
+        setEmotionHistory(prev => {
+          const newHistory = [...prev, data];
+          return newHistory.slice(-30);
+        });
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
+      }
+    };
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
+
+  const sendEmotionData = (data: EmotionScore) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(data));
+    }
   };
 
   useEffect(() => {
@@ -45,11 +76,7 @@ const CameraStream = () => {
       try {
         const score = await detectEmotion(webcamRef.current.video);
         if (score) {
-          setEmotionScore(score);
-          setEmotionHistory(prev => {
-            const newHistory = [...prev, score];
-            return newHistory.slice(-30);
-          });
+          sendEmotionData(score);
         }
       } catch (error) {
         console.error('Error detecting emotion:', error);

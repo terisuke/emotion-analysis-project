@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/terisuke/emotion-analysis/api/handlers"
+	"emotion-analysis/api/handlers"
 )
 
 func main() {

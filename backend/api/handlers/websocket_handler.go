@@ -5,10 +5,12 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
+	gorillaws "github.com/gorilla/websocket"
+	"emotion-analysis/pkg/websocket"
+	"emotion-analysis/internal/services"
 )
 
-var upgrader = websocket.Upgrader{
+var upgrader = gorillaws.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
@@ -18,9 +20,11 @@ var upgrader = websocket.Upgrader{
 
 // WebSocketハブのインスタンスをパッケージレベルで保持
 var wsHub *websocket.Hub
+var emotionService *services.EmotionService
 
 func init() {
 	wsHub = websocket.NewHub()
+	emotionService = services.NewEmotionService()
 	go wsHub.Run()
 }
 
@@ -35,16 +39,25 @@ func HandleWebSocket(c *gin.Context) {
 		Conn: conn,
 	}
 
-	wsHub.register <- client
+	wsHub.Register <- client
 
 	// クライアントからのメッセージを処理
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			log.Printf("error: %v", err)
-			wsHub.unregister <- client
+			wsHub.Unregister <- client
 			break
 		}
-		wsHub.broadcast <- message
+
+		// 受信したデータを処理
+		emotionData, err := emotionService.ProcessEmotionData(message)
+		if err != nil {
+			log.Printf("Error processing emotion data: %v", err)
+			continue
+		}
+
+		// 処理したデータをブロードキャスト
+		wsHub.Broadcast <- message
 	}
 }
