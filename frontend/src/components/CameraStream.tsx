@@ -1,32 +1,53 @@
+// frontend/src/components/CameraStream.tsx
+
 'use client';
 
 import { useRef, useEffect, useState } from 'react';
 import Webcam from 'react-webcam';
-import { detectEmotion, EmotionScore, initializeFaceDetector } from '@/utils/emotionDetection';
-import EmotionDisplay from './EmotionDisplay';
+import {
+  detectEmotion,
+  EmotionScore,
+  initializeFaceDetector,
+} from '@/utils/emotionDetection';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import SingleBestEmotionDisplay from './SingleBestEmotionDisplay'; // 追加
+
+/**
+ * 最も値が大きい感情を取り出すヘルパー関数
+ */
+function getDominantEmotion(emotions: Record<string, number>) {
+  let bestEmotion = '';
+  let bestScore = 0;
+  for (const [key, value] of Object.entries(emotions)) {
+    if (value > bestScore) {
+      bestScore = value;
+      bestEmotion = key;
+    }
+  }
+  return { emotion: bestEmotion, score: bestScore };
+}
 
 const CameraStream = () => {
   const webcamRef = useRef<Webcam>(null);
   const requestAnimationFrameRef = useRef<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // カメラ／分析の状態管理
   const [isInitialized, setIsInitialized] = useState(false);
   const [isVideoReady, setIsVideoReady] = useState(false);
 
-  // 感情スコアの履歴
+  // 現在の感情 & 履歴
   const [emotionScore, setEmotionScore] = useState<EmotionScore | null>(null);
   const [emotionHistory, setEmotionHistory] = useState<EmotionScore[]>([]);
 
+  // カメラ設定
   const videoConstraints = {
     width: 640,
     height: 480,
     facingMode: 'user',
   };
 
+  // --- WebSocket接続 ---
   useEffect(() => {
-    // WebSocket接続を確立
     const ws = new WebSocket('ws://localhost:8080/ws');
     wsRef.current = ws;
 
@@ -37,14 +58,15 @@ const CameraStream = () => {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.log('Received data:', data); // 受信データのログ
+        console.log('Received data:', data);
 
-        // 受信したデータをStateに反映 -> 再レンダー
+        // 最新の感情を保存
         setEmotionScore(data);
+
+        // 履歴にも追加 (max 30)
         setEmotionHistory((prev) => {
-          // 新しい配列を返す
           const newHistory = [...prev, data];
-          return newHistory.slice(-30); // 最新30個だけ保持
+          return newHistory.slice(-30);
         });
       } catch (error) {
         console.error('Error parsing WebSocket message:', error);
@@ -58,22 +80,21 @@ const CameraStream = () => {
     };
   }, []);
 
-  // WebSocketに感情データを送る関数
+  // WebSocket 送信
   const sendEmotionData = (data: EmotionScore) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       const formattedData = {
         ...data,
         timestamp: performance.now(),
       };
-      console.log('Sending data:', formattedData); // 送信データのログ
+      console.log('Sending data:', formattedData);
       wsRef.current.send(JSON.stringify(formattedData));
     }
   };
 
-  // ビデオが "初期化済み & readyState=4" になったかを監視
+  // カメラが初期化されたら、video.readyState が 4になるのを待つ
   useEffect(() => {
     let checkVideoInterval: NodeJS.Timeout;
-
     if (isInitialized && webcamRef.current && webcamRef.current.video) {
       checkVideoInterval = setInterval(() => {
         const video = webcamRef.current?.video;
@@ -95,9 +116,10 @@ const CameraStream = () => {
   const detectEmotionLoop = async () => {
     if (webcamRef.current?.video) {
       try {
+        // 1フレーム分の感情を分析
         const score = await detectEmotion(webcamRef.current.video);
         if (score) {
-          // フロントエンド→バックエンドへ送信
+          // バックエンドへ送信
           sendEmotionData(score);
         }
       } catch (error) {
@@ -107,14 +129,13 @@ const CameraStream = () => {
     requestAnimationFrameRef.current = requestAnimationFrame(detectEmotionLoop);
   };
 
-  // ビデオ準備完了したら分析を開始
+  // カメラ映像が準備できたら分析開始
   useEffect(() => {
     if (isVideoReady) {
       initializeFaceDetector().then(() => {
         detectEmotionLoop();
       });
     }
-
     return () => {
       if (requestAnimationFrameRef.current) {
         cancelAnimationFrame(requestAnimationFrameRef.current);
@@ -122,18 +143,22 @@ const CameraStream = () => {
     };
   }, [isVideoReady]);
 
+  // カメラ使用可能になった時のコールバック
   const handleUserMedia = () => {
     setIsInitialized(true);
   };
 
   return (
     <div className="space-y-4">
+      {/* カメラ映像 */}
       <div className="relative w-full max-w-2xl mx-auto bg-gray-900 rounded-lg overflow-hidden">
+        {/* カメラ初期化中オーバーレイ */}
         {!isInitialized && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75">
             <p className="text-white">カメラを初期化中...</p>
           </div>
         )}
+
         <Webcam
           ref={webcamRef}
           audio={false}
@@ -143,22 +168,30 @@ const CameraStream = () => {
           videoConstraints={videoConstraints}
           onUserMedia={handleUserMedia}
           className="rounded-lg shadow-lg"
-          mirrored={true}
+          mirrored
         />
 
+        {/* 右上に単一の感情だけ表示 (棒グラフ→単一表示へ変更) */}
         {emotionScore && (
           <div className="absolute top-4 right-4 w-64">
-            <EmotionDisplay emotions={emotionScore.emotions} />
+            {/** 最もスコアが高い感情を取り出す */}
+            {(() => {
+              const { emotion, score } = getDominantEmotion(emotionScore.emotions);
+              return (
+                <SingleBestEmotionDisplay
+                  emotionLabel={emotion}
+                  confidence={score}
+                />
+              );
+            })()}
           </div>
         )}
       </div>
 
+      {/* 下の折れ線グラフはそのまま */}
       {emotionHistory.length > 0 && (
         <div className="w-full h-64 bg-gray-900 rounded-lg p-4">
-          <ResponsiveContainer
-            // ポイント: キーを変えることで強制的に再描画を誘発する手法
-            key={emotionHistory.length}
-          >
+          <ResponsiveContainer key={emotionHistory.length}>
             <LineChart data={emotionHistory}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="timestamp" hide />
