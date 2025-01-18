@@ -103,7 +103,7 @@ func (agg *EmotionAggregator) runChecker() {
 				agg.sendAlert("悲しみが5秒以上継続しています...", "info")
 			} else if neutralRatio >= 0.9 {
 				// ★ 追加例: 無表情90%超
-				agg.sendAlert("もうちょっと感情を出しましょう", "info")
+				agg.sendAlert("もっと熱くなれよ！", "info")
 			}
 		}
 
