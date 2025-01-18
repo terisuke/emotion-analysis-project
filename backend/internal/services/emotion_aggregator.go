@@ -1,142 +1,127 @@
-// ※ユーザーIDの概念が無い場合はグローバルでもいいが、あれば userID -> []EmotionData で管理
-
 package services
 
 import (
-    "log"
-    "sync"
-    "time"
+	"encoding/json"
+	"log"
+	"sync"
+	"time"
 
-    "emotion-analysis/internal/models"
-    "emotion-analysis/pkg/websocket"
-    "encoding/json"
+	"emotion-analysis/internal/models"
+	"emotion-analysis/pkg/websocket"
 )
 
-// 1. Aggregator構造体: 全体の直近の感情データを保持
+// EmotionAggregator: 直近のEmotionDataを保持し定期的にチェック
 type EmotionAggregator struct {
-    // グローバルに全データを保持
-    data  []*models.EmotionData
-    mu    sync.Mutex
+	data []*models.EmotionData
+	mu   sync.Mutex
 
-    // WebSocketハブへの参照 (アラート送信用)
-    Hub   *websocket.Hub
+	Hub *websocket.Hub
 
-    // 監視間隔などの設定
-    checkInterval time.Duration
-    keepDuration  time.Duration
+	checkInterval time.Duration
+	keepDuration  time.Duration
 }
 
-// グローバルなAggregatorインスタンス
 var GlobalAggregator *EmotionAggregator
 
-// 初期化
 func InitAggregator(hub *websocket.Hub) {
-    GlobalAggregator = &EmotionAggregator{
-        data:  make([]*models.EmotionData, 0),
-        Hub:   hub,
-        checkInterval: 1 * time.Second,  // 1秒ごとチェック
-        keepDuration:  5 * time.Second,  // 例: 5秒間の履歴を保持
-    }
-    // goroutineで定期的にチェックを回す
-    go GlobalAggregator.runChecker()
+	GlobalAggregator = &EmotionAggregator{
+		data:          make([]*models.EmotionData, 0),
+		Hub:           hub,
+		checkInterval: 1 * time.Second,  // 1秒ごとチェック
+		keepDuration:  10 * time.Second, // ★ 10秒分の履歴を保持
+	}
+	go GlobalAggregator.runChecker()
 }
 
-// AddEmotion: 感情データを追加
+// AddEmotion: EmotionDataを追加
 func (agg *EmotionAggregator) AddEmotion(_ string, e *models.EmotionData) {
-    agg.mu.Lock()
-    defer agg.mu.Unlock()
+	agg.mu.Lock()
+	defer agg.mu.Unlock()
 
-    // 直近keepDuration(例:5秒)以外のデータは捨てる
-    now := e.Timestamp
-    cutoff := now - agg.keepDuration.Seconds()*1000 // 例: Timestampがmillisecondsなら計算合わせる
-    // ↑ emotionData.Timestamp が "performance.now()" ならms単位なので
+	// 1) Dominant emotionを計算してセット (既にフロントが付与していても再計算OK)
+	dominant, score := GetDominantEmotion(e.Emotions)
+	e.Dominant = dominant
+	e.DominantScore = score
 
-    // 既存のsliceから古いデータを除去
-    var newSlice []*models.EmotionData
-    for _, d := range agg.data {
-        if d.Timestamp >= cutoff {
-            newSlice = append(newSlice, d)
-        }
-    }
-    // 末尾に新データを追加
-    newSlice = append(newSlice, e)
-    agg.data = newSlice
+	// 2) 10秒を越えた古いデータを削除
+	now := e.Timestamp
+	cutoff := now - agg.keepDuration.Seconds()*1000 // msベース
+	var newSlice []*models.EmotionData
+	for _, d := range agg.data {
+		if d.Timestamp >= cutoff {
+			newSlice = append(newSlice, d)
+		}
+	}
+	newSlice = append(newSlice, e)
+	agg.data = newSlice
 }
 
-// runChecker: 1秒ごとに直近5秒分を見て「怒り or 悲しみが継続」してないか判定
 func (agg *EmotionAggregator) runChecker() {
-    ticker := time.NewTicker(agg.checkInterval)
-    defer ticker.Stop()
+	ticker := time.NewTicker(agg.checkInterval)
+	defer ticker.Stop()
 
-    for {
-        <-ticker.C
-        agg.mu.Lock()
-        slice := agg.data
-        // slice内の "angry" or "sad" が閾値超え続けてるかを判定
-        // 例えば "angry>0.8 のフレームが全フレームの80%以上 かつ slice全体の期間>=3秒" など
-        if len(slice) == 0 {
-            agg.mu.Unlock()
-            continue
-        }
-        durationMs := slice[len(slice)-1].Timestamp - slice[0].Timestamp // ms
+	for {
+		<-ticker.C
 
-        // 怒り連続判定: 例: 全体の平均angryが 0.8 以上 かつ 3秒以上
-        if durationMs >= 3000 {
-            avgAngry, avgSad := calcAverageAngrySad(slice)
-            if avgAngry >= 0.8 {
-                // アラート送信
-                alert := models.AlertMessage{
-                    Type:    "alert",
-                    Level:   "warning",
-                    Message: "怒りが3秒以上継続しています...",
-                }
-                b, err := json.Marshal(alert)
-                if err != nil {
-                    log.Printf("sendAlert marshal error: %v", err)
-                } else {
-                    agg.Hub.Broadcast <- b
-                }
-            } else if avgSad >= 0.7 {
-                alert := models.AlertMessage{
-                    Type:    "alert", 
-                    Level:   "info",
-                    Message: "悲しみが継続して高い状態です...",
-                }
-                b, err := json.Marshal(alert)
-                if err != nil {
-                    log.Printf("sendAlert marshal error: %v", err)
-                } else {
-                    agg.Hub.Broadcast <- b
-                }
-            }
-        }
-        agg.mu.Unlock()
-    }
+		agg.mu.Lock()
+		slice := agg.data
+		if len(slice) == 0 {
+			agg.mu.Unlock()
+			continue
+		}
+
+		// 直近データの経過時間 (ms)
+		durationMs := slice[len(slice)-1].Timestamp - slice[0].Timestamp
+
+		// 各dominant感情のフレーム数を数える
+		var angryCount, sadCount, neutralCount int
+		for _, d := range slice {
+			// (例) ある程度scoreが高いときのみカウント
+			if d.DominantScore >= 0.4 {
+				switch d.Dominant {
+				case "angry":
+					angryCount++
+				case "sad":
+					sadCount++
+				case "neutral":
+					neutralCount++
+				}
+			}
+		}
+
+		totalFrames := len(slice)
+		angryRatio := float64(angryCount) / float64(totalFrames)
+		sadRatio := float64(sadCount) / float64(totalFrames)
+		neutralRatio := float64(neutralCount) / float64(totalFrames)
+
+		// ここで判定: 10秒以上かつ各感情比率がしきい値を超えたらアラート
+		if durationMs >= 10000 { // 10秒以上
+			// 例: 怒り80%以上
+			if angryRatio >= 0.8 {
+				agg.sendAlert("怒りが10秒以上継続しています...", "warning")
+			} else if sadRatio >= 0.7 {
+				agg.sendAlert("悲しみが10秒以上継続しています...", "info")
+			} else if neutralRatio >= 0.9 {
+				// ★ 追加例: 無表情90%超
+				agg.sendAlert("もうちょっと感情を出しましょう", "info")
+			}
+		}
+
+		agg.mu.Unlock()
+	}
 }
 
-// calcAverageAngrySad: slice内のangry/sad平均値
-func calcAverageAngrySad(data []*models.EmotionData) (angryAvg float64, sadAvg float64) {
-    var sumAngry, sumSad float64
-    for _, d := range data {
-        sumAngry += d.Emotions["angry"]
-        sumSad   += d.Emotions["sad"]
-    }
-    n := float64(len(data))
-    return sumAngry / n, sumSad / n
-}
-
-// sendAlert: WebSocketハブに "type=alert" メッセージを送る
 func (agg *EmotionAggregator) sendAlert(msg, level string) {
-    alert := models.AlertMessage{
-        Type:    "alert",
-        Level:   level,
-        Message: msg,
-    }
-    b, err := json.Marshal(alert)
-    if err != nil {
-        log.Printf("sendAlert marshal error: %v", err)
-        return
-    }
-    // 全員へブロードキャスト
-    agg.Hub.Broadcast <- b
+	alert := models.AlertMessage{
+		Type:    "alert",
+		Level:   level,
+		Message: msg,
+	}
+	b, err := json.Marshal(alert)
+	if err != nil {
+		log.Printf("sendAlert marshal error: %v", err)
+		return
+	}
+	// 全クライアントへBroadcast
+	agg.Hub.Broadcast <- b
 }
