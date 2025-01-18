@@ -85,9 +85,29 @@ func (agg *EmotionAggregator) runChecker() {
             avgAngry, avgSad := calcAverageAngrySad(slice)
             if avgAngry >= 0.8 {
                 // アラート送信
-                agg.sendAlert("怒りが3秒以上高い状態です！", "warning")
+                alert := models.AlertMessage{
+                    Type:    "alert",
+                    Level:   "warning",
+                    Message: "怒りが3秒以上継続しています...",
+                }
+                b, err := json.Marshal(alert)
+                if err != nil {
+                    log.Printf("sendAlert marshal error: %v", err)
+                } else {
+                    agg.Hub.Broadcast <- b
+                }
             } else if avgSad >= 0.7 {
-                agg.sendAlert("悲しみが継続して高い状態です...", "info")
+                alert := models.AlertMessage{
+                    Type:    "alert", 
+                    Level:   "info",
+                    Message: "悲しみが継続して高い状態です...",
+                }
+                b, err := json.Marshal(alert)
+                if err != nil {
+                    log.Printf("sendAlert marshal error: %v", err)
+                } else {
+                    agg.Hub.Broadcast <- b
+                }
             }
         }
         agg.mu.Unlock()
