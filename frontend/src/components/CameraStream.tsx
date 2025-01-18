@@ -19,7 +19,7 @@ import {
 } from 'recharts';
 import SingleBestEmotionDisplay from './SingleBestEmotionDisplay';
 
-/** 
+/**
  * 簡易的なポップアップを表示するコンポーネント
  * （適宜デザインを整えてください）
  */
@@ -82,6 +82,7 @@ export default function CameraStream() {
 
   // --- WebSocket接続 ---
   useEffect(() => {
+    // ※ fetch("http://localhost:8080/ws") ではなく、必ず new WebSocket("ws://localhost:8080/ws") を使う
     const ws = new WebSocket('ws://localhost:8080/ws');
     wsRef.current = ws;
 
@@ -104,7 +105,7 @@ export default function CameraStream() {
         setEmotionScore(data);
         setEmotionHistory((prev) => {
           const newHistory = [...prev, data];
-          return newHistory.slice(-30); // 最新30件だけ
+          return newHistory.slice(-30); // 最新30件だけ残す
         });
       } catch (error) {
         console.error('Error parsing WebSocket message:', error);

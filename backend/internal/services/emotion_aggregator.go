@@ -94,13 +94,13 @@ func (agg *EmotionAggregator) runChecker() {
 		sadRatio := float64(sadCount) / float64(totalFrames)
 		neutralRatio := float64(neutralCount) / float64(totalFrames)
 
-		// ここで判定: 10秒以上かつ各感情比率がしきい値を超えたらアラート
-		if durationMs >= 10000 { // 10秒以上
+		// ここで判定: 5秒以上かつ各感情比率がしきい値を超えたらアラート
+		if durationMs >= 5000 { // 5秒以上
 			// 例: 怒り80%以上
 			if angryRatio >= 0.8 {
-				agg.sendAlert("怒りが10秒以上継続しています...", "warning")
+				agg.sendAlert("怒りが5秒以上継続しています...", "warning")
 			} else if sadRatio >= 0.7 {
-				agg.sendAlert("悲しみが10秒以上継続しています...", "info")
+				agg.sendAlert("悲しみが5秒以上継続しています...", "info")
 			} else if neutralRatio >= 0.9 {
 				// ★ 追加例: 無表情90%超
 				agg.sendAlert("もうちょっと感情を出しましょう", "info")
