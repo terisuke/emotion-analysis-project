@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 
@@ -26,6 +27,7 @@ func init() {
 	wsHub = websocket.NewHub()
 	emotionService = services.NewEmotionService()
 	go wsHub.Run()
+	log.Printf("WebSocket Hub initialized and running") // 初期化ログ
 }
 
 func HandleWebSocket(c *gin.Context) {
@@ -39,16 +41,19 @@ func HandleWebSocket(c *gin.Context) {
 		Conn: conn,
 	}
 
+	log.Printf("New client connected") // 接続ログ
 	wsHub.Register <- client
 
 	// クライアントからのメッセージを処理
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("error: %v", err)
+			log.Printf("Client disconnected with error: %v", err) // 切断ログ
 			wsHub.Unregister <- client
 			break
 		}
+
+		log.Printf("Received message from client") // 受信ログ
 
 		// 受信したデータを処理
 		emotionData, err := emotionService.ProcessEmotionData(message)
@@ -57,7 +62,17 @@ func HandleWebSocket(c *gin.Context) {
 			continue
 		}
 
+		log.Printf("Processed emotion data: %+v", emotionData) // 処理済みデータのログ
+
+		// 処理したデータをJSON形式に変換
+		processedData, err := json.Marshal(emotionData)
+		if err != nil {
+			log.Printf("Error marshaling emotion data: %v", err)
+			continue
+		}
+
+		log.Printf("Broadcasting emotion data to all clients") // ブロードキャストログ
 		// 処理したデータをブロードキャスト
-		wsHub.Broadcast <- message
+		wsHub.Broadcast <- processedData
 	}
 }

@@ -25,9 +25,14 @@ const CameraStream = () => {
     const ws = new WebSocket('ws://localhost:8080/ws');
     wsRef.current = ws;
 
+    ws.onopen = () => {
+      console.log('WebSocket Connected');
+    };
+
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        console.log('Received data:', data);  // 受信データのログ
         setEmotionScore(data);
         setEmotionHistory(prev => {
           const newHistory = [...prev, data];
@@ -47,7 +52,12 @@ const CameraStream = () => {
 
   const sendEmotionData = (data: EmotionScore) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(data));
+      const formattedData = {
+        ...data,
+        timestamp: performance.now(),
+      };
+      console.log('Sending data:', formattedData);  // 送信データのログ
+      wsRef.current.send(JSON.stringify(formattedData));
     }
   };
 
