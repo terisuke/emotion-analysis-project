@@ -6,6 +6,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"emotion-analysis/api/handlers"
+	"emotion-analysis/internal/services"
 )
 
 func main() {
@@ -17,6 +18,10 @@ func main() {
 	config.AllowMethods = []string{"GET", "POST", "OPTIONS"}
 	config.AllowHeaders = []string{"Origin", "Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization"}
 	r.Use(cors.New(config))
+
+	// WebSocket Hub は handlers.init() で初期化済み
+	// Aggregator初期化 (wsHubを渡す)
+	services.InitAggregator(handlers.GetHub())
 
 	// ルート設定
 	r.GET("/", func(c *gin.Context) {
