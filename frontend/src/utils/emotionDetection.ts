@@ -1,6 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable @typescript-eslint/no-unused-vars */
-// src/utils/emotionDetection.ts を更新
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 
 let faceLandmarker: FaceLandmarker | null = null;
@@ -37,39 +35,67 @@ export async function initializeFaceDetector() {
 
 function getBlendshapeScore(blendshapes: any[], categories: string[]) {
   return categories.reduce((acc, category) => {
-    const shape = blendshapes.find(b => b.categoryName.toLowerCase().includes(category.toLowerCase()));
+    const shape = blendshapes.find((b: any) =>
+      b.categoryName.toLowerCase().includes(category.toLowerCase())
+    );
     return acc + (shape ? shape.score : 0);
   }, 0) / categories.length;
 }
 
+/**
+ * この関数で表情特徴量を感情スコア5種に変換
+ * neutral 計算式や clipping を変更
+ */
 function calculateEmotions(blendshapes: any[]) {
-  // 表情の特徴量を取得
-  const mouthSmile = getBlendshapeScore(blendshapes, ['mouthSmile']) * 1.5;
-  const mouthFrown = getBlendshapeScore(blendshapes, ['mouthFrown']) * 1.2;
-  const browRaise = getBlendshapeScore(blendshapes, ['browRaise', 'browInnerUp']);
-  const browDown = getBlendshapeScore(blendshapes, ['browDown']) * 1.3;
-  const eyeWide = getBlendshapeScore(blendshapes, ['eyeWide']);
-  const jawOpen = getBlendshapeScore(blendshapes, ['jawOpen']);
+  // 各ブレンドシェイプの例
+  const mouthSmile = getBlendshapeScore(blendshapes, ['mouthSmile']) * 1.2; // 少し控えめ
+  const mouthFrown = getBlendshapeScore(blendshapes, ['mouthFrown']) * 1.1; // 少し控えめ
+  const browRaise  = getBlendshapeScore(blendshapes, ['browRaise', 'browInnerUp']);
+  const browDown   = getBlendshapeScore(blendshapes, ['browDown']) * 1.1;
+  const eyeWide    = getBlendshapeScore(blendshapes, ['eyeWide']);
+  const jawOpen    = getBlendshapeScore(blendshapes, ['jawOpen']);
 
-  // 各感情のスコアを計算
+  // 各感情の仮スコア
   const emotions = {
-    happy: Math.min(mouthSmile, 1),
-    sad: Math.min(mouthFrown + browRaise * 0.3, 1),
-    angry: Math.min(browDown + mouthFrown * 0.4, 1),
-    surprised: Math.min((eyeWide + jawOpen) / 2, 1),
-    neutral: 0  // 後で計算
+    // "Math.min(...,1)" を取り除く
+    happy: (mouthSmile),
+    sad: (mouthFrown + browRaise * 0.3),
+    angry: (browDown + mouthFrown * 0.4),
+    surprised: ((eyeWide + jawOpen) / 2),
+    neutral: 0,
   };
 
-  // 他の感情の合計を計算
-  const totalExpression = Object.values(emotions).reduce((sum, score) => sum + score, 0);
-  
-  // neutralを計算（他の感情が少ないほど高くなる）
-  emotions.neutral = Math.max(0, 1 - totalExpression / 3);
+  // 他の感情合計
+  const totalExpression = Object.values(emotions).reduce((sum, v) => sum + v, 0);
 
-  // スコアの正規化
-  const total = Object.values(emotions).reduce((sum, score) => sum + score, 0);
-  for (const key in emotions) {
-    emotions[key as keyof typeof emotions] /= total;
+  // neutralを「1 - totalExpression」で算出
+  // もし totalExpression > 1 なら neutral は 0 になる
+  let neutralScore = 1 - totalExpression;
+  if (neutralScore < 0) {
+    neutralScore = 0; // 0未満になったら0にクリップ
+  }
+  emotions.neutral = neutralScore;
+
+  // ---------------------
+  // 最後にすべて正規化 (合計を1にする)
+  // ---------------------
+  let sumAll = 0;
+  for (const key of Object.keys(emotions)) {
+    sumAll += emotions[key as keyof typeof emotions];
+  }
+  // sumAll が0なら(表情検出失敗など) 全部0のまま or ちょっと加算
+  if (sumAll === 0) {
+    return {
+      happy: 0,
+      sad: 0,
+      angry: 0,
+      surprised: 0,
+      neutral: 1, // 全部0ならneutral=1にする等
+    };
+  }
+  // 正規化
+  for (const key of Object.keys(emotions)) {
+    emotions[key as keyof typeof emotions] /= sumAll;
   }
 
   return emotions;
@@ -89,7 +115,7 @@ export async function detectEmotion(video: HTMLVideoElement): Promise<EmotionSco
       return {
         timestamp: performance.now(),
         confidence: results.faceBlendshapes[0].categories[0].score,
-        emotions
+        emotions,
       };
     }
   } catch (error) {
